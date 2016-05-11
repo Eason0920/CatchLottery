@@ -31,8 +31,13 @@ namespace tw.net.ebc {
 
         #region *** 常數資料 ***
 
-        //取得目前星期幾
-        private static readonly DayOfWeek WEEK = DateTime.Now.DayOfWeek;
+        //公佈最新開獎號碼小時區間
+        private static readonly int ANNOUNCE_HOUR_BEGIN = 22;
+        private static readonly int ANNOUNCE_HOUR_END = 23;
+
+        //取得目前星期幾(若執行時間不是介於晚上公佈開獎結果之間，則取得前一日的星期)
+        private static readonly DayOfWeek WEEK = ((DateTime.Now.Hour.Equals(ANNOUNCE_HOUR_BEGIN) || DateTime.Now.Hour.Equals(ANNOUNCE_HOUR_END)) ?
+            DateTime.Now.DayOfWeek : DateTime.Now.AddDays(-1).DayOfWeek);
 
         //紀錄錯誤訊息資料夾
         private static readonly string LOG_FOLDER = string.Concat(Environment.CurrentDirectory, @"\App_Data\Log\");
@@ -93,11 +98,11 @@ namespace tw.net.ebc {
 
             Console.Write("--- 台灣彩券最新開獎資訊 ---\n\n");
 
-            //優先檢查目前是否已經是最新版本
-            if (!checkIsLastVersion()) {
+            //優先檢查目前星期是否有進行開獎，而且文件檔是否已經是最新版本
+            if (WEEK_LOTTERY_DICY.ContainsKey(WEEK) && (!checkIsLastVersion())) {
                 HtmlDocument htmlDoc = new HtmlDocument();
-                DateTime catchStartDt = DateTime.Now;
-                DateTime catchEndDt;
+                DateTime executeStartDt = DateTime.Now;
+                DateTime executeEndDt;
                 TimeSpan calcDiff;
 
                 #region *** 抓取台灣彩券頁面最新開獎資訊 ***
@@ -105,18 +110,18 @@ namespace tw.net.ebc {
                 try {
                     Console.Write("正在擷取最新開獎資訊，此過程所需時間較長，請稍後 ...\n\n");
                     htmlDoc.LoadHtml(Utility.getWebContent(Utility.getAppSettings("LOTTERY_CATCH_PATH"), Encoding.UTF8));
-                    catchEndDt = DateTime.Now;
-                    calcDiff = catchEndDt.Subtract(catchStartDt);
+                    executeEndDt = DateTime.Now;
+                    calcDiff = executeEndDt.Subtract(executeStartDt);
                     Console.Write(string.Format("已完整取得最新開獎號碼，共花費： {0} 秒，開始產生文件 ...\n\n", Math.Round(calcDiff.TotalSeconds)));
                 } catch (Exception ex) {
-                    catchEndDt = DateTime.Now;
-                    calcDiff = catchEndDt.Subtract(catchStartDt);
+                    executeEndDt = DateTime.Now;
+                    calcDiff = executeEndDt.Subtract(executeStartDt);
                     string exceptionTitle = "無法完整取得台灣彩券最新開獎號碼 (step.1)";
                     double totalSeconds = Math.Round(calcDiff.TotalSeconds);
 
                     //寄發錯誤通知郵件
                     string mailContent = string.Format(MAIL_TEMPLATE,
-                        catchStartDt.ToString("yyyy-MM-dd HH:mm:ss"), exceptionTitle, totalSeconds, DateTime.Now.Year);
+                        executeStartDt.ToString("yyyy-MM-dd HH:mm:ss"), exceptionTitle, totalSeconds, DateTime.Now.Year);
                     sendSystemEMail(mailContent);
 
                     //寫 Log 檔
@@ -192,14 +197,14 @@ namespace tw.net.ebc {
                         }
                     }
                 } catch (Exception ex) {
-                    catchEndDt = DateTime.Now;
-                    calcDiff = catchEndDt.Subtract(catchStartDt);
+                    executeEndDt = DateTime.Now;
+                    calcDiff = executeEndDt.Subtract(executeStartDt);
                     string exceptionTitle = "解析最新開獎號碼發生未知的錯誤 (step.2)";
                     double totalSeconds = Math.Round(calcDiff.TotalSeconds);
 
                     //寄發錯誤通知郵件
                     string mailContent = string.Format(MAIL_TEMPLATE,
-                        catchStartDt.ToString("yyyy-MM-dd HH:mm:ss"), exceptionTitle, totalSeconds, DateTime.Now.Year);
+                        executeStartDt.ToString("yyyy-MM-dd HH:mm:ss"), exceptionTitle, totalSeconds, DateTime.Now.Year);
                     sendSystemEMail(mailContent);
 
                     //寫 Log 檔
@@ -218,14 +223,14 @@ namespace tw.net.ebc {
                     //產生實體檔案
                     File.WriteAllLines(Utility.getAppSettings("SAVE_FILE_PATH"), lotteryContentList, Encoding.UTF8);
                 } catch (Exception ex) {
-                    catchEndDt = DateTime.Now;
-                    calcDiff = catchEndDt.Subtract(catchStartDt);
+                    executeEndDt = DateTime.Now;
+                    calcDiff = executeEndDt.Subtract(executeStartDt);
                     string exceptionTitle = "產生最新開獎號碼文件發生未知的錯誤 (step.3)";
                     double totalSeconds = Math.Round(calcDiff.TotalSeconds);
 
                     //寄發錯誤通知郵件
                     string mailContent = string.Format(MAIL_TEMPLATE,
-                        catchStartDt.ToString("yyyy-MM-dd HH:mm:ss"), exceptionTitle, totalSeconds, DateTime.Now.Year);
+                        executeStartDt.ToString("yyyy-MM-dd HH:mm:ss"), exceptionTitle, totalSeconds, DateTime.Now.Year);
                     sendSystemEMail(mailContent);
 
                     //寫 Log 檔
@@ -257,8 +262,11 @@ namespace tw.net.ebc {
                 if (File.Exists(filePath)) {
                     result = true;
                     string[] content = File.ReadAllLines(filePath);
-                    DateTime now = DateTime.Now;
-                    string today = string.Format("{0}年{1}月{2}日", (now.Year - 1911), now.Month, now.Day);
+
+                    //若執行時間不是介於晚上公佈開獎結果之間，則取得前一日的日期
+                    DateTime catchDate = ((DateTime.Now.Hour.Equals(ANNOUNCE_HOUR_BEGIN) || DateTime.Now.Hour.Equals(ANNOUNCE_HOUR_END)) ?
+                        DateTime.Now : DateTime.Now.AddDays(-1));
+                    string catchDateFormat = string.Format("{0}年{1}月{2}日", (catchDate.Year - 1911), catchDate.Month, catchDate.Day);
 
                     //判斷讀取到的彩券開獎日期是否與目前的日期相同，若不相同則表示文件檔不是最新的
                     foreach (string data in content) {
@@ -268,7 +276,7 @@ namespace tw.net.ebc {
 
                             //取得每一種彩券的開獎日期
                             string lotteryDate = data.Split(new string[] { DELIMITER_INFO }, StringSplitOptions.RemoveEmptyEntries)[1];
-                            if (!lotteryDate.Equals(today)) {
+                            if (!lotteryDate.Equals(catchDateFormat)) {
                                 result = false;
                                 break;
                             }
